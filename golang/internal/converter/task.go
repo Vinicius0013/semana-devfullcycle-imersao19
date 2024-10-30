@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,11 +15,15 @@ import (
 )
 
 // VideoConverter handles video conversion tasks
-type VideoConverter struct{}
+type VideoConverter struct{
+	db *sql.DB
+}
 
 // NewVideoConverter creates a new instance of VideoConverter
-func NewVideoConverter() *VideoConverter {
-	return &VideoConverter{}
+func NewVideoConverter(db *sql.DB) *VideoConverter {
+	return &VideoConverter{
+		db: db,
+	}
 }
 
 // VideoTask represents a video conversion task
@@ -37,12 +42,24 @@ func (vc *VideoConverter) Handle(msg []byte) {
 		return
 	}
 
+	if IsProcessed(vc.db, task.VideoID) {
+		slog.Warn("Video already processed", slog.Int("video_id", task.VideoID))
+		return
+	}
+
 	// Process the video
 	err = vc.processVideo(&task)
 	if err != nil {
 		vc.logError(task, "failed to process video", err)
 		return
 	}
+
+	err = MarkProcess(vc.db, task.VideoID)
+	if err != nil {
+		vc.logError(task, "failed to mark video as processed", err)
+		return
+	}
+	slog.Info("Video marked as processed", slog.Int("video_id", task.VideoID))
 }
 
 // processVideo handles video processing (merging chunks and converting)
@@ -94,7 +111,7 @@ func (vc *VideoConverter) processVideo(task *VideoTask) error {
 
 // logError handles logging the error in JSON format
 func (vc *VideoConverter) logError(task VideoTask, message string, err error) {
-	errorData := map[string]any{
+	errorData := map[string]interface{}{
 		"video_id": task.VideoID,
 		"error":    message,
 		"details":  err.Error(),
@@ -103,7 +120,7 @@ func (vc *VideoConverter) logError(task VideoTask, message string, err error) {
 	serializedError, _ := json.Marshal(errorData)
 	slog.Error("Processing error", slog.String("error_details", string(serializedError)))
 
-	// todo: register error on database
+	RegisterError(vc.db, errorData, err)
 }
 
 // Método para extrair o número do nome do arquivo
